@@ -24,8 +24,7 @@ interface KeyVisualizerProps {
 
   highestTemp: number;
 
-  // fired when user scrolls over canvas
-  // scrollHandler: () => void;
+  hoverHandler: (x, y, sampleTime, spanStats) => void;
 }
 
 // TODO: figure out how to make canvas width and height dynamic
@@ -46,7 +45,6 @@ function drawBucket(pixels, x, y, width, height, color) {
 
   for (let j = y; j < y + height; j++) {
     for (let i = x; i < x + width; i++) {
-
       // prevent wrap around indexing
       if (i < 0 || i >= CanvasWidth) {
         continue;
@@ -61,7 +59,7 @@ function drawBucket(pixels, x, y, width, height, color) {
   }
 }
 
-class KeyVisualizer extends React.Component<KeyVisualizerProps> {
+class KeyVisualizer extends React.PureComponent<KeyVisualizerProps> {
   xPanOffset = 0;
   yPanOffset = 0;
   isPanning = false;
@@ -74,6 +72,7 @@ class KeyVisualizer extends React.Component<KeyVisualizerProps> {
     e: React.MouseEvent<HTMLCanvasElement, MouseEvent>
   ) => void;
   zoomHandlerThrottled: (e: React.WheelEvent<HTMLCanvasElement>) => void;
+  hoverHandlerThrottled: any;
 
   constructor(props) {
     super(props);
@@ -85,7 +84,7 @@ class KeyVisualizer extends React.Component<KeyVisualizerProps> {
       const startTime = window.performance.now();
       // clear
       this.ctx.clearRect(0, 0, this.ctx.canvas.width, this.ctx.canvas.height);
-      this.ctx.fillStyle = "black"
+      this.ctx.fillStyle = "black";
       this.ctx.fillRect(0, 0, this.ctx.canvas.width, this.ctx.canvas.height);
       const imageData = this.ctx.getImageData(
         0,
@@ -166,7 +165,7 @@ class KeyVisualizer extends React.Component<KeyVisualizerProps> {
           (i * CanvasWidth * this.xZoomFactor) / nSamples;
 
         const y = CanvasHeight - XAxisLabelPadding;
-        this.ctx.fillText(timeString, x, y)
+        this.ctx.fillText(timeString, x, y);
       }
     }); // end RAF
   };
@@ -176,6 +175,7 @@ class KeyVisualizer extends React.Component<KeyVisualizerProps> {
   }
 
   componentDidUpdate() {
+    console.warn("component update");
     this.renderKeyVisualizer();
   }
 
@@ -211,6 +211,58 @@ class KeyVisualizer extends React.Component<KeyVisualizerProps> {
     this.panHandlerThrottled(e);
   };
 
+  handleCanvasHover = (e) => {
+    if (!this.hoverHandlerThrottled) {
+      this.hoverHandlerThrottled = throttle((e) => {
+        const mouseX = e.nativeEvent.offsetX;
+        const mouseY = e.nativeEvent.offsetY;
+        // which bucket does this mouse coord fall into?
+        const nSamples = this.props.response.samples.length;
+
+        iterate_samples: for (let i = 0; i < nSamples; i++) {
+          let sample = this.props.response.samples[i];
+
+          iterate_spans: for (let j = 0; j < sample.span_stats.length; j++) {
+            const bucket = sample.span_stats[j];
+
+            const x =
+              YAxisLabelPadding +
+              this.xPanOffset +
+              (i * CanvasWidth * this.xZoomFactor) / nSamples;
+            const y =
+              this.props.yOffsetForKey[bucket.span.start_key] *
+                this.yZoomFactor +
+              this.yPanOffset;
+
+            let width =
+              ((CanvasWidth - YAxisLabelPadding) * this.xZoomFactor) / nSamples;
+            let height =
+              this.props.yOffsetForKey[bucket.span.end_key] * this.yZoomFactor -
+              y +
+              this.yPanOffset;
+
+            if (
+              mouseX >= x &&
+              mouseX <= x + width &&
+              mouseY >= y &&
+              mouseY <= y + height
+            ) {
+              this.props.hoverHandler(
+                mouseX,
+                mouseY,
+                sample.sample_time,
+                bucket
+              );
+              break iterate_samples;
+            }
+          }
+        }
+      }, 50);
+    }
+
+    this.hoverHandlerThrottled(e);
+  };
+
   render() {
     return (
       <canvas
@@ -220,6 +272,8 @@ class KeyVisualizer extends React.Component<KeyVisualizerProps> {
         onMouseMove={(e) => {
           if (this.isPanning) {
             this.handleCanvasPan(e);
+          } else {
+            this.handleCanvasHover(e);
           }
         }}
         width={CanvasWidth}
@@ -251,11 +305,40 @@ function randomSpanStats() {
   return spanStats;
 }
 
+interface SpanHoverTooltipProps {
+  x: number;
+  y: number;
+  spanStats: SpanStatistics;
+}
+
+const SpanHoverTooltip: React.FunctionComponent<SpanHoverTooltipProps> = (
+  props
+) => {
+  return (
+    <div
+      style={{
+        fontFamily: "-apple-system, BlinkMacSystemFont",
+        position: "absolute",
+        left: `${props.x + 60}`,
+        top: `${props.y + 30}`,
+        background: "white",
+        padding: "20px",
+        borderRadius: "4px",
+      }}
+    >
+      <p>start key: {props.spanStats?.span.start_key}</p>
+      <p>end key: {props.spanStats?.span.end_key}</p>
+      <p>QPS: {props.spanStats?.qps.toPrecision(3)}</p>
+    </div>
+  );
+};
+
 class App extends React.Component {
   state = {
     response: undefined,
     yOffsetForKey: {},
     highestTemp: 1,
+    spanTooltipState: undefined,
   };
 
   componentDidMount() {
@@ -314,6 +397,17 @@ class App extends React.Component {
     });
   }
 
+  updateSpanHoverTooltip = (
+    x: number,
+    y: number,
+    sampleTime,
+    spanStats: SpanStatistics
+  ) => {
+    this.setState({
+      spanTooltipState: { x, y, spanStats },
+    });
+  };
+
   render() {
     return (
       <div>
@@ -321,7 +415,9 @@ class App extends React.Component {
           response={this.state.response}
           yOffsetForKey={this.state.yOffsetForKey}
           highestTemp={this.state.highestTemp}
+          hoverHandler={this.updateSpanHoverTooltip}
         />
+        <SpanHoverTooltip {...this.state.spanTooltipState} />
       </div>
     );
   }
