@@ -34,31 +34,24 @@ interface KeyVisualizerProps {
 const CanvasWidth = 1200;
 const CanvasHeight = 1000;
 const YAxisLabelPadding = 10;
-const XAxisLabelPadding = 20;
+const XAxisLabelPadding = 10;
 const RenderableWidth = CanvasWidth - YAxisLabelPadding;
-const RenderableHeight = CanvasHeight - XAxisLabelPadding
+const RenderableHeight = CanvasHeight - XAxisLabelPadding;
 
 function drawBucket(pixels, x, y, width, height, color) {
-
   // clip if not on screen
   if (x > CanvasWidth || x + width < 0 || y > CanvasHeight || y + height < 0) {
-    return
+    return;
   }
 
-
-  // console.log("draw bucket")
   for (let j = y; j < y + height; j++) {
     for (let i = x; i < x + width; i++) {
 
-
+      // prevent wrap around indexing
       if (i < 0 || i >= CanvasWidth) {
-        continue
+        continue;
       }
 
-      //     // console.log(i, j)
-      //     // when calculating index, remember the y-axis and x-axis offets for the axes labels.
-
-      //     // every pixels has 4 values: red, green, blue, alpha.
       const index = i * 4 + j * 4 * CanvasWidth;
       pixels[index] = color[0] * 255; // red
       pixels[index + 1] = color[1] * 255; // green
@@ -92,6 +85,8 @@ class KeyVisualizer extends React.Component<KeyVisualizerProps> {
       const startTime = window.performance.now();
       // clear
       this.ctx.clearRect(0, 0, this.ctx.canvas.width, this.ctx.canvas.height);
+      this.ctx.fillStyle = "black"
+      this.ctx.fillRect(0, 0, this.ctx.canvas.width, this.ctx.canvas.height);
       const imageData = this.ctx.getImageData(
         0,
         0,
@@ -125,20 +120,7 @@ class KeyVisualizer extends React.Component<KeyVisualizerProps> {
             this.yPanOffset;
 
           // compute color
-          // const relativeTemp = (bucket.qps / this.props.highestTemp) * 255;
-          // const fillStyle = `rgba(${relativeTemp.toFixed(0)}, 0, 0, 1)`;
-          // this.ctx.fillStyle = fillStyle;
           const color = [bucket.qps / this.props.highestTemp, 0, 0];
-
-
-          // because of fake data,
-          // handle the case were the end_key < start_key
-          // width = Math.abs(width);
-          // height = Math.abs(height);
-
-          // render
-          // this.ctx.fillRect(x, y, width, height);
-          // console.log(x, y, width, height)
 
           drawBucket(
             pixels,
@@ -155,17 +137,38 @@ class KeyVisualizer extends React.Component<KeyVisualizerProps> {
       this.ctx.putImageData(imageData, 0, 0);
       console.log("render time: ", window.performance.now() - startTime);
 
-      // // render y axis
-      // this.ctx.fillStyle = "black";
-      // this.ctx.font = "2px sans-serif";
-      // for (let [key, yOffset] of Object.entries(this.props.yOffsetForKey)) {
-      //   this.ctx.fillText(
-      //     key,
-      //     YAxisLabelPadding,
-      //     yOffset * this.yZoomFactor + 14
-      //   );
-      // }
-    });
+      // render y axis
+      // choose 10 values to display
+
+      this.ctx.fillStyle = "white";
+      this.ctx.font = "12px sans-serif";
+      let labelCount = 0;
+      const nSkip = 555;
+      for (let [key, yOffset] of Object.entries(this.props.yOffsetForKey)) {
+        labelCount++;
+        if (labelCount % nSkip === 0) {
+          this.ctx.fillText(
+            key,
+            YAxisLabelPadding,
+            yOffset * this.yZoomFactor + this.yPanOffset
+          );
+        }
+      }
+
+      // render x axis
+      for (let i = 0; i < this.props.response.samples.length; i++) {
+        const sample = this.props.response.samples[i];
+
+        let timeString = sample.sample_time.toString();
+        const x =
+          YAxisLabelPadding +
+          this.xPanOffset +
+          (i * CanvasWidth * this.xZoomFactor) / nSamples;
+
+        const y = CanvasHeight - XAxisLabelPadding;
+        this.ctx.fillText(timeString, x, y)
+      }
+    }); // end RAF
   };
 
   componentDidMount() {
@@ -186,8 +189,8 @@ class KeyVisualizer extends React.Component<KeyVisualizerProps> {
         this.xZoomFactor += deltaY;
 
         // clamp zoom factor between 1 and 10
-        this.yZoomFactor = Math.max(1, Math.min(10, this.yZoomFactor));
-        this.xZoomFactor = Math.max(1, Math.min(10, this.xZoomFactor));
+        this.yZoomFactor = Math.max(1, Math.min(20, this.yZoomFactor));
+        this.xZoomFactor = Math.max(1, Math.min(20, this.xZoomFactor));
 
         this.renderKeyVisualizer();
       }, 1000 / 60);
@@ -262,9 +265,9 @@ class App extends React.Component {
 
     const oneHour = 4;
     const oneDay = oneHour * 24;
-    for (let i = 0; i < oneDay * 7; i++) {
+    for (let i = 0; i < oneDay; i++) {
       response.samples.push({
-        sample_time: 10000000 + i,
+        sample_time: 1 + i,
         span_stats: randomSpanStats(),
       });
     }
