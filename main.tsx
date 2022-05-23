@@ -1,5 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom";
+import { throttle } from "lodash";
 
 interface Sample {
   sample_time: number;
@@ -33,6 +34,39 @@ interface KeyVisualizerProps {
 const CanvasWidth = 1200;
 const CanvasHeight = 1000;
 const YAxisLabelPadding = 10;
+const XAxisLabelPadding = 20;
+const RenderableWidth = CanvasWidth - YAxisLabelPadding;
+const RenderableHeight = CanvasHeight - XAxisLabelPadding
+
+function drawBucket(pixels, x, y, width, height, color) {
+
+  // clip if not on screen
+  if (x > CanvasWidth || x + width < 0 || y > CanvasHeight || y + height < 0) {
+    return
+  }
+
+
+  // console.log("draw bucket")
+  for (let j = y; j < y + height; j++) {
+    for (let i = x; i < x + width; i++) {
+
+
+      if (i < 0 || i >= CanvasWidth) {
+        continue
+      }
+
+      //     // console.log(i, j)
+      //     // when calculating index, remember the y-axis and x-axis offets for the axes labels.
+
+      //     // every pixels has 4 values: red, green, blue, alpha.
+      const index = i * 4 + j * 4 * CanvasWidth;
+      pixels[index] = color[0] * 255; // red
+      pixels[index + 1] = color[1] * 255; // green
+      pixels[index + 2] = color[2] * 255; // blue
+      pixels[index + 3] = 255; // alpha
+    }
+  }
+}
 
 class KeyVisualizer extends React.Component<KeyVisualizerProps> {
   xPanOffset = 0;
@@ -43,6 +77,10 @@ class KeyVisualizer extends React.Component<KeyVisualizerProps> {
 
   canvasRef: React.RefObject<HTMLCanvasElement>;
   ctx: CanvasRenderingContext2D;
+  panHandlerThrottled: (
+    e: React.MouseEvent<HTMLCanvasElement, MouseEvent>
+  ) => void;
+  zoomHandlerThrottled: (e: React.WheelEvent<HTMLCanvasElement>) => void;
 
   constructor(props) {
     super(props);
@@ -51,15 +89,18 @@ class KeyVisualizer extends React.Component<KeyVisualizerProps> {
 
   renderKeyVisualizer = () => {
     requestAnimationFrame(() => {
-
       const startTime = window.performance.now();
       // clear
       this.ctx.clearRect(0, 0, this.ctx.canvas.width, this.ctx.canvas.height);
+      const imageData = this.ctx.getImageData(
+        0,
+        0,
+        this.ctx.canvas.width,
+        this.ctx.canvas.height
+      );
+      const pixels = imageData.data;
 
       // render samples
-      this.ctx.fillStyle = "gray";
-      this.ctx.fillRect(0, 0, this.ctx.canvas.width, this.ctx.canvas.height);
-
       const nSamples = this.props.response.samples.length;
       for (let i = 0; i < nSamples; i++) {
         const sample = this.props.response.samples[i];
@@ -73,33 +114,57 @@ class KeyVisualizer extends React.Component<KeyVisualizerProps> {
             this.xPanOffset +
             (i * CanvasWidth * this.xZoomFactor) / nSamples;
           const y =
-            (this.props.yOffsetForKey[bucket.span.start_key] * this.yZoomFactor) + this.yPanOffset;
-          const width =
+            this.props.yOffsetForKey[bucket.span.start_key] * this.yZoomFactor +
+            this.yPanOffset;
+
+          let width =
             ((CanvasWidth - YAxisLabelPadding) * this.xZoomFactor) / nSamples;
-          const height =
+          let height =
             this.props.yOffsetForKey[bucket.span.end_key] * this.yZoomFactor -
-            y;
+            y +
+            this.yPanOffset;
 
           // compute color
-          const relativeTemp = (bucket.qps / this.props.highestTemp) * 255;
-          const fillStyle = `rgba(${relativeTemp.toFixed(0)}, 0, 0, 1)`;
-          this.ctx.fillStyle = fillStyle;
-          this.ctx.fillRect(x, y, width, height);
+          // const relativeTemp = (bucket.qps / this.props.highestTemp) * 255;
+          // const fillStyle = `rgba(${relativeTemp.toFixed(0)}, 0, 0, 1)`;
+          // this.ctx.fillStyle = fillStyle;
+          const color = [bucket.qps / this.props.highestTemp, 0, 0];
+
+
+          // because of fake data,
+          // handle the case were the end_key < start_key
+          // width = Math.abs(width);
+          // height = Math.abs(height);
+
+          // render
+          // this.ctx.fillRect(x, y, width, height);
+          // console.log(x, y, width, height)
+
+          drawBucket(
+            pixels,
+            Math.ceil(x),
+            Math.ceil(y),
+            Math.ceil(width),
+            Math.ceil(height),
+            color
+          );
         }
       }
 
-      // render y axis
-      this.ctx.fillStyle = "white";
-      this.ctx.font = "2px sans-serif";
-      for (let [key, yOffset] of Object.entries(this.props.yOffsetForKey)) {
-        this.ctx.fillText(
-          key,
-          YAxisLabelPadding,
-          yOffset * this.yZoomFactor + 14
-        );
-      }
+      // blit
+      this.ctx.putImageData(imageData, 0, 0);
+      console.log("render time: ", window.performance.now() - startTime);
 
-      console.log("render time: ", window.performance.now() - startTime)
+      // // render y axis
+      // this.ctx.fillStyle = "black";
+      // this.ctx.font = "2px sans-serif";
+      // for (let [key, yOffset] of Object.entries(this.props.yOffsetForKey)) {
+      //   this.ctx.fillText(
+      //     key,
+      //     YAxisLabelPadding,
+      //     yOffset * this.yZoomFactor + 14
+      //   );
+      // }
     });
   };
 
@@ -112,27 +177,35 @@ class KeyVisualizer extends React.Component<KeyVisualizerProps> {
   }
 
   handleCanvasScroll = (e) => {
-    e.preventDefault();
-    // normalize value and negate so that "scrolling up" zooms in
-    const deltaY = -e.deltaY / 100;
+    if (!this.zoomHandlerThrottled) {
+      this.zoomHandlerThrottled = throttle((e) => {
+        // normalize value and negate so that "scrolling up" zooms in
+        const deltaY = -e.deltaY / 100;
 
-    this.yZoomFactor += deltaY;
-    this.xZoomFactor += deltaY;
+        this.yZoomFactor += deltaY;
+        this.xZoomFactor += deltaY;
 
-    // clamp zoom factor between 1 and 10
-    this.yZoomFactor = Math.max(1, Math.min(10, this.yZoomFactor));
-    this.xZoomFactor = Math.max(1, Math.min(10, this.xZoomFactor));
+        // clamp zoom factor between 1 and 10
+        this.yZoomFactor = Math.max(1, Math.min(10, this.yZoomFactor));
+        this.xZoomFactor = Math.max(1, Math.min(10, this.xZoomFactor));
 
-    this.renderKeyVisualizer();
+        this.renderKeyVisualizer();
+      }, 1000 / 60);
+    }
+
+    this.zoomHandlerThrottled(e);
   };
 
   handleCanvasPan = (e) => {
+    if (!this.panHandlerThrottled) {
+      this.panHandlerThrottled = throttle((e) => {
+        this.xPanOffset += e.movementX;
+        this.yPanOffset += e.movementY;
+        this.renderKeyVisualizer();
+      }, 1000 / 60);
+    }
 
-    this.xPanOffset += e.movementX
-    this.yPanOffset += e.movementY;
-
-    this.renderKeyVisualizer()
-
+    this.panHandlerThrottled(e);
   };
 
   render() {
@@ -142,8 +215,8 @@ class KeyVisualizer extends React.Component<KeyVisualizerProps> {
         onMouseDown={() => (this.isPanning = true)}
         onMouseUp={() => (this.isPanning = false)}
         onMouseMove={(e) => {
-          if(this.isPanning) {
-            this.handleCanvasPan(e)
+          if (this.isPanning) {
+            this.handleCanvasPan(e);
           }
         }}
         width={CanvasWidth}
@@ -154,19 +227,21 @@ class KeyVisualizer extends React.Component<KeyVisualizerProps> {
   }
 }
 
-function randomKey() {
-  let key = "";
-  for (let i = 0; i < 8; i++) {
-    key += Math.random() >= 0.5 ? "a" : "b";
-  }
-  return key;
-}
-
 function randomSpanStats() {
+  const NBucketsPerSample = 1000;
   const spanStats = [];
-  for (let i = 0; i < 1000; i++) {
+  let firstKey = 0;
+  for (let i = 0; i < NBucketsPerSample; i++) {
+    const start_key = firstKey;
+    const keySpanDistance = Math.ceil(Math.random() * 512);
+    const end_key = start_key + keySpanDistance;
+
+    const nextSpanOffset =
+      Math.random() <= 0.5 ? Math.ceil(Math.random() * 16) : 0;
+    firstKey = end_key + nextSpanOffset;
+
     spanStats.push({
-      span: { start_key: randomKey(), end_key: randomKey() },
+      span: { start_key: start_key.toString(), end_key: end_key.toString() },
       qps: Math.random(),
     });
   }
@@ -187,7 +262,7 @@ class App extends React.Component {
 
     const oneHour = 4;
     const oneDay = oneHour * 24;
-    for (let i = 0; i < oneHour; i++) {
+    for (let i = 0; i < oneDay * 7; i++) {
       response.samples.push({
         sample_time: 10000000 + i,
         span_stats: randomSpanStats(),
@@ -213,14 +288,16 @@ class App extends React.Component {
     }
 
     // sort lexicographically
-    const keysSorted = Object.keys(keys);
-    keysSorted.sort();
+    let keysSorted = Object.keys(keys).map((key) => parseInt(key));
+    keysSorted.sort((a, b) => a - b);
+    keysSorted = keysSorted.map((key) => key.toString()) as any;
 
     console.log(keysSorted);
 
     // compute height of each key
     const yOffsetForKey = keysSorted.reduce((acc, curr, index) => {
-      acc[curr] = (index * (CanvasHeight - 20)) / (keysSorted.length - 1);
+      acc[curr] =
+        (index * (CanvasHeight - XAxisLabelPadding)) / (keysSorted.length - 1);
       return acc;
     }, {});
 
