@@ -133,7 +133,7 @@ class KeyVisualizer extends React.PureComponent<KeyVisualizerProps> {
       this.ctx.fillStyle = "white";
       this.ctx.font = "12px sans-serif";
       let labelCount = 0;
-      const nSkip = 555;
+      const nSkip = 2000;
       for (let [key, yOffset] of Object.entries(this.props.yOffsetForKey)) {
         labelCount++;
         if (labelCount % nSkip === 0) {
@@ -219,6 +219,26 @@ class KeyVisualizer extends React.PureComponent<KeyVisualizerProps> {
       this.panHandlerThrottled = throttle((e) => {
         this.xPanOffset += e.movementX;
         this.yPanOffset += e.movementY;
+
+        this.yPanOffset = Math.min(0, this.yPanOffset);
+        this.xPanOffset = Math.min(0, this.xPanOffset);
+
+        if (this.xPanOffset < 0) {
+          let topRight = this.xPanOffset + CanvasWidth * this.xZoomFactor;
+
+          // top right can never be less than CanvasWidth
+          topRight = Math.max(CanvasWidth, topRight);
+
+          // convert back to top left
+          this.xPanOffset = topRight - CanvasWidth * this.xZoomFactor;
+        }
+
+        if (this.yPanOffset < 0) {
+          let bottomLeft = this.yPanOffset + CanvasHeight * this.yZoomFactor;
+          bottomLeft = Math.max(CanvasHeight, bottomLeft);
+          this.yPanOffset = bottomLeft - CanvasHeight * this.yZoomFactor;
+        }
+
         this.renderKeyVisualizer();
       }, 1000 / 60);
     }
@@ -424,7 +444,7 @@ class App extends React.Component {
           highestTemp={this.state.highestTemp}
           hoverHandler={this.updateSpanHoverTooltip}
         />
-        <SpanHoverTooltip {...this.state.spanTooltipState} />
+        {/* <SpanHoverTooltip {...this.state.spanTooltipState} /> */}
       </div>
     );
   }
