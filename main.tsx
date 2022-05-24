@@ -103,20 +103,11 @@ class KeyVisualizer extends React.PureComponent<KeyVisualizerProps> {
           const bucket = sample.span_stats[j];
 
           // compute x, y, width, and height of rendered span.
-          const x =
-            YAxisLabelPadding +
-            this.xPanOffset +
-            (i * CanvasWidth * this.xZoomFactor) / nSamples;
-          const y =
-            this.props.yOffsetForKey[bucket.span.start_key] * this.yZoomFactor +
-            this.yPanOffset;
-
-          let width =
-            ((CanvasWidth - YAxisLabelPadding) * this.xZoomFactor) / nSamples;
-          let height =
-            this.props.yOffsetForKey[bucket.span.end_key] * this.yZoomFactor -
-            y +
-            this.yPanOffset;
+          const { x, y, width, height } = this.computeBucket(
+            i,
+            nSamples,
+            bucket
+          );
 
           // compute color
           const color = [bucket.qps / this.props.highestTemp, 0, 0];
@@ -134,7 +125,7 @@ class KeyVisualizer extends React.PureComponent<KeyVisualizerProps> {
 
       // blit
       this.ctx.putImageData(imageData, 0, 0);
-      console.log("render time: ", window.performance.now() - startTime);
+      // console.log("render time: ", window.performance.now() - startTime);
 
       // render y axis
       // choose 10 values to display
@@ -169,6 +160,30 @@ class KeyVisualizer extends React.PureComponent<KeyVisualizerProps> {
       }
     }); // end RAF
   };
+
+  computeBucket(sampleIndex: number, nSamples: number, bucket: SpanStatistics) {
+    const x =
+      YAxisLabelPadding +
+      this.xPanOffset +
+      (sampleIndex * CanvasWidth * this.xZoomFactor) / nSamples;
+    const y =
+      this.props.yOffsetForKey[bucket.span.start_key] * this.yZoomFactor +
+      this.yPanOffset;
+
+    const width =
+      ((CanvasWidth - YAxisLabelPadding) * this.xZoomFactor) / nSamples;
+    const height =
+      this.props.yOffsetForKey[bucket.span.end_key] * this.yZoomFactor -
+      y +
+      this.yPanOffset;
+
+    return {
+      x,
+      y,
+      width,
+      height,
+    };
+  }
 
   componentDidMount() {
     this.ctx = this.canvasRef.current.getContext("2d");
@@ -216,30 +231,22 @@ class KeyVisualizer extends React.PureComponent<KeyVisualizerProps> {
       this.hoverHandlerThrottled = throttle((e) => {
         const mouseX = e.nativeEvent.offsetX;
         const mouseY = e.nativeEvent.offsetY;
-        // which bucket does this mouse coord fall into?
         const nSamples = this.props.response.samples.length;
 
+        // label this for loop so we can break from it.
+        // I thought this would need to be implemented with some sort of O(1) lookup
+        // or a binary partitioning scheme, but a naive `for` loop seems to be fast enough...
         iterate_samples: for (let i = 0; i < nSamples; i++) {
           let sample = this.props.response.samples[i];
 
-          iterate_spans: for (let j = 0; j < sample.span_stats.length; j++) {
+          for (let j = 0; j < sample.span_stats.length; j++) {
             const bucket = sample.span_stats[j];
 
-            const x =
-              YAxisLabelPadding +
-              this.xPanOffset +
-              (i * CanvasWidth * this.xZoomFactor) / nSamples;
-            const y =
-              this.props.yOffsetForKey[bucket.span.start_key] *
-                this.yZoomFactor +
-              this.yPanOffset;
-
-            let width =
-              ((CanvasWidth - YAxisLabelPadding) * this.xZoomFactor) / nSamples;
-            let height =
-              this.props.yOffsetForKey[bucket.span.end_key] * this.yZoomFactor -
-              y +
-              this.yPanOffset;
+            const { x, y, width, height } = this.computeBucket(
+              i,
+              nSamples,
+              bucket
+            );
 
             if (
               mouseX >= x &&
