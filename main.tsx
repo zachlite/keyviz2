@@ -3,21 +3,22 @@ import ReactDOM from "react-dom";
 import { throttle } from "lodash";
 
 interface Sample {
-  sample_time: number;
-  span_stats: SpanStatistics[];
+  sampleTime: { wallTime: number };
+  spanStats: SpanStatistics[];
 }
 
 interface SpanStatistics {
-  span: { start_key: string; end_key: string };
+  // pretty
+  span: { startKey: string; endKey: string };
   qps: number;
 }
 
 interface GetSamplesResponse {
   samples: Sample[];
+  keys: string[] // lexicographically sorted
 }
 
 interface KeyVisualizerProps {
-  // each sample is sorted lexicographically by start_key
   response: GetSamplesResponse;
 
   yOffsetForKey: Record<string, number>;
@@ -25,6 +26,8 @@ interface KeyVisualizerProps {
   highestTemp: number;
 
   hoverHandler: (x, y, sampleTime, spanStats) => void;
+
+  setShowTooltip: (show: boolean) => void;
 }
 
 // TODO: figure out how to make canvas width and height dynamic
@@ -51,10 +54,20 @@ function drawBucket(pixels, x, y, width, height, color) {
       }
 
       const index = i * 4 + j * 4 * CanvasWidth;
-      pixels[index] = color[0] * 255; // red
-      pixels[index + 1] = color[1] * 255; // green
-      pixels[index + 2] = color[2] * 255; // blue
-      pixels[index + 3] = 255; // alpha
+
+      if (j === y || i === x) {
+        pixels[index] = 100; // red
+        pixels[index + 1] = 100; // green
+        pixels[index + 2] = 100; // blue
+        pixels[index + 3] = 255; // alpha
+      } else {
+
+        pixels[index] = color[0] * 255; // red
+        pixels[index + 1] = color[1] * 255; // green
+        pixels[index + 2] = color[2] * 255; // blue
+        pixels[index + 3] = 255; // alpha
+      }
+
     }
   }
 }
@@ -99,8 +112,8 @@ class KeyVisualizer extends React.PureComponent<KeyVisualizerProps> {
       for (let i = 0; i < nSamples; i++) {
         const sample = this.props.response.samples[i];
 
-        for (let j = 0; j < sample.span_stats.length; j++) {
-          const bucket = sample.span_stats[j];
+        for (let j = 0; j < sample.spanStats.length; j++) {
+          const bucket = sample.spanStats[j];
 
           // compute x, y, width, and height of rendered span.
           const { x, y, width, height } = this.computeBucket(
@@ -111,6 +124,7 @@ class KeyVisualizer extends React.PureComponent<KeyVisualizerProps> {
 
           // compute color
           const color = [bucket.qps / this.props.highestTemp, 0, 0];
+          debugger
 
           drawBucket(
             pixels,
@@ -133,23 +147,25 @@ class KeyVisualizer extends React.PureComponent<KeyVisualizerProps> {
       this.ctx.fillStyle = "white";
       this.ctx.font = "12px sans-serif";
       let labelCount = 0;
-      const nSkip = 2000;
+      // const nSkip = 1;
       for (let [key, yOffset] of Object.entries(this.props.yOffsetForKey)) {
         labelCount++;
-        if (labelCount % nSkip === 0) {
-          this.ctx.fillText(
-            key,
-            YAxisLabelPadding,
-            yOffset * this.yZoomFactor + this.yPanOffset
-          );
-        }
+        // if (labelCount % nSkip === 0) {
+        this.ctx.fillText(
+          key,
+          YAxisLabelPadding,
+          yOffset * this.yZoomFactor + this.yPanOffset
+        );
+        // }
       }
 
       // render x axis
       for (let i = 0; i < this.props.response.samples.length; i++) {
         const sample = this.props.response.samples[i];
 
-        let timeString = sample.sample_time.toString();
+        let timeString = new Date(
+          sample.sampleTime.wallTime / 1e6
+        ).toUTCString();
         const x =
           YAxisLabelPadding +
           this.xPanOffset +
@@ -167,13 +183,13 @@ class KeyVisualizer extends React.PureComponent<KeyVisualizerProps> {
       this.xPanOffset +
       (sampleIndex * CanvasWidth * this.xZoomFactor) / nSamples;
     const y =
-      this.props.yOffsetForKey[bucket.span.start_key] * this.yZoomFactor +
+      this.props.yOffsetForKey[bucket.span.startKey] * this.yZoomFactor +
       this.yPanOffset;
 
     const width =
       ((CanvasWidth - YAxisLabelPadding) * this.xZoomFactor) / nSamples;
     const height =
-      this.props.yOffsetForKey[bucket.span.end_key] * this.yZoomFactor -
+      this.props.yOffsetForKey[bucket.span.endKey] * this.yZoomFactor -
       y +
       this.yPanOffset;
 
@@ -206,6 +222,12 @@ class KeyVisualizer extends React.PureComponent<KeyVisualizerProps> {
         // clamp zoom factor between 1 and 10
         this.yZoomFactor = Math.max(1, Math.min(20, this.yZoomFactor));
         this.xZoomFactor = Math.max(1, Math.min(20, this.xZoomFactor));
+
+        // if zoomed out, reset pan
+        if (this.yZoomFactor === 1 && this.xZoomFactor === 1) {
+          this.xPanOffset = 0;
+          this.yPanOffset = 0;
+        }
 
         this.renderKeyVisualizer();
       }, 1000 / 60);
@@ -252,15 +274,14 @@ class KeyVisualizer extends React.PureComponent<KeyVisualizerProps> {
         const mouseX = e.nativeEvent.offsetX;
         const mouseY = e.nativeEvent.offsetY;
         const nSamples = this.props.response.samples.length;
-
         // label this for loop so we can break from it.
         // I thought this would need to be implemented with some sort of O(1) lookup
         // or a binary partitioning scheme, but a naive `for` loop seems to be fast enough...
         iterate_samples: for (let i = 0; i < nSamples; i++) {
           let sample = this.props.response.samples[i];
 
-          for (let j = 0; j < sample.span_stats.length; j++) {
-            const bucket = sample.span_stats[j];
+          for (let j = 0; j < sample.spanStats.length; j++) {
+            const bucket = sample.spanStats[j];
 
             const { x, y, width, height } = this.computeBucket(
               i,
@@ -277,7 +298,7 @@ class KeyVisualizer extends React.PureComponent<KeyVisualizerProps> {
               this.props.hoverHandler(
                 mouseX,
                 mouseY,
-                sample.sample_time,
+                sample.sampleTime,
                 bucket
               );
               break iterate_samples;
@@ -294,8 +315,14 @@ class KeyVisualizer extends React.PureComponent<KeyVisualizerProps> {
     return (
       <canvas
         onWheel={(e) => this.handleCanvasScroll(e)}
-        onMouseDown={() => (this.isPanning = true)}
-        onMouseUp={() => (this.isPanning = false)}
+        onMouseDown={() => {
+          this.isPanning = true;
+          this.props.setShowTooltip(false);
+        }}
+        onMouseUp={() => {
+          this.isPanning = false;
+          this.props.setShowTooltip(true);
+        }}
         onMouseMove={(e) => {
           if (this.isPanning) {
             this.handleCanvasPan(e);
@@ -353,9 +380,9 @@ const SpanHoverTooltip: React.FunctionComponent<SpanHoverTooltipProps> = (
         borderRadius: "4px",
       }}
     >
-      <p>start key: {props.spanStats?.span.start_key}</p>
-      <p>end key: {props.spanStats?.span.end_key}</p>
-      <p>QPS: {props.spanStats?.qps.toPrecision(3)}</p>
+      <p>start key: {props.spanStats?.span.startKey}</p>
+      <p>end key: {props.spanStats?.span.endKey}</p>
+      <p>batch reqs: {props.spanStats?.qps}</p>
     </div>
   );
 };
@@ -366,51 +393,41 @@ class App extends React.Component {
     yOffsetForKey: {},
     highestTemp: 1,
     spanTooltipState: undefined,
+    showTooltip: true,
   };
 
-  componentDidMount() {
-    const response: GetSamplesResponse = {
-      samples: [],
-    };
-
-    const oneHour = 4;
-    const oneDay = oneHour * 24;
-    for (let i = 0; i < oneDay; i++) {
-      response.samples.push({
-        sample_time: 1 + i,
-        span_stats: randomSpanStats(),
-      });
-    }
-
-    console.log(response.samples);
-
+  processResponse(response: GetSamplesResponse) {
+    console.log(response);
     // find set of all keys
     // if this is slow, I could get this from the server.
-    const keys = {};
+    // const keys = {};
     let highestTemp = 0;
     for (let sample of response.samples) {
-      for (let stat of sample.span_stats) {
+      for (let stat of sample.spanStats) {
         // we only care about deduping span keys.
         // '1' is just a truthy value.
-        keys[stat.span.start_key] = 1;
-        keys[stat.span.end_key] = 1;
+        // keys[stat.span.startKey] = 1;
+        // keys[stat.span.endKey] = 1;
+
+        if (!stat.qps) {
+          stat.qps = 0;
+        }
+
         if (stat.qps > highestTemp) {
           highestTemp = stat.qps;
         }
       }
     }
 
-    // sort lexicographically
-    let keysSorted = Object.keys(keys).map((key) => parseInt(key));
-    keysSorted.sort((a, b) => a - b);
-    keysSorted = keysSorted.map((key) => key.toString()) as any;
 
-    console.log(keysSorted);
+    // TODO: sort lexicographically
+    // let keysSorted = Object.keys(keys);
+    // console.log(keysSorted);
 
     // compute height of each key
-    const yOffsetForKey = keysSorted.reduce((acc, curr, index) => {
+    const yOffsetForKey = response.keys.reduce((acc, curr, index) => {
       acc[curr] =
-        (index * (CanvasHeight - XAxisLabelPadding)) / (keysSorted.length - 1);
+        (index * (CanvasHeight - XAxisLabelPadding)) / (response.keys.length - 1);
       return acc;
     }, {});
 
@@ -422,6 +439,33 @@ class App extends React.Component {
       yOffsetForKey,
       highestTemp,
     });
+  }
+
+  fakeSamples(): Promise<GetSamplesResponse> {
+    const response: GetSamplesResponse = {
+      samples: [],
+      keys: []
+    };
+
+    const oneHour = 4;
+    const oneDay = oneHour * 24;
+    for (let i = 0; i < oneDay; i++) {
+      response.samples.push({
+        sampleTime: { wallTime: 1 + i },
+        spanStats: randomSpanStats(),
+      });
+    }
+
+    return Promise.resolve(response);
+  }
+
+  fetchSamples(): Promise<GetSamplesResponse> {
+    return fetch("http://localhost:8000").then((res) => res.json());
+  }
+
+  componentDidMount() {
+    // this.fakeSamples().then((response) => this.processResponse(response));
+    this.fetchSamples().then((response) => this.processResponse(response));
   }
 
   updateSpanHoverTooltip = (
@@ -443,8 +487,13 @@ class App extends React.Component {
           yOffsetForKey={this.state.yOffsetForKey}
           highestTemp={this.state.highestTemp}
           hoverHandler={this.updateSpanHoverTooltip}
+          setShowTooltip={(show) => {
+            this.setState({ showTooltip: show });
+          }}
         />
-        {/* <SpanHoverTooltip {...this.state.spanTooltipState} /> */}
+        {this.state.showTooltip && (
+          <SpanHoverTooltip {...this.state.spanTooltipState} />
+        )}
       </div>
     );
   }
