@@ -29,9 +29,9 @@ function buildSortedKeys() {
       prettyForBase64[stat.sp.endKey] = stat.span.endKey;
 
       if (stat.qps == null) {
-        stat.qps = 0
+        stat.batchRequests = 0
       } else {
-        stat.qps = parseInt(stat.qps)
+        stat.batchRequests = parseInt(stat.qps)
       }
 
       keyspace.add(stat.sp.key);

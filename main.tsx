@@ -10,7 +10,7 @@ interface Sample {
 interface SpanStatistics {
   // pretty
   span: { startKey: string; endKey: string };
-  qps: number;
+  batchRequests: number;
 }
 
 interface GetSamplesResponse {
@@ -123,8 +123,7 @@ class KeyVisualizer extends React.PureComponent<KeyVisualizerProps> {
           );
 
           // compute color
-          const color = [bucket.qps / this.props.highestTemp, 0, 0];
-          debugger
+          const color = [bucket.batchRequests / this.props.highestTemp, 0, 0];
 
           drawBucket(
             pixels,
@@ -338,27 +337,6 @@ class KeyVisualizer extends React.PureComponent<KeyVisualizerProps> {
   }
 }
 
-function randomSpanStats() {
-  const NBucketsPerSample = 1000;
-  const spanStats = [];
-  let firstKey = 0;
-  for (let i = 0; i < NBucketsPerSample; i++) {
-    const start_key = firstKey;
-    const keySpanDistance = Math.ceil(Math.random() * 512);
-    const end_key = start_key + keySpanDistance;
-
-    const nextSpanOffset =
-      Math.random() <= 0.5 ? Math.ceil(Math.random() * 16) : 0;
-    firstKey = end_key + nextSpanOffset;
-
-    spanStats.push({
-      span: { start_key: start_key.toString(), end_key: end_key.toString() },
-      qps: Math.random(),
-    });
-  }
-  return spanStats;
-}
-
 interface SpanHoverTooltipProps {
   x: number;
   y: number;
@@ -382,7 +360,7 @@ const SpanHoverTooltip: React.FunctionComponent<SpanHoverTooltipProps> = (
     >
       <p>start key: {props.spanStats?.span.startKey}</p>
       <p>end key: {props.spanStats?.span.endKey}</p>
-      <p>batch reqs: {props.spanStats?.qps}</p>
+      <p>batch reqs: {props.spanStats?.batchRequests}</p>
     </div>
   );
 };
@@ -391,38 +369,24 @@ class App extends React.Component {
   state = {
     response: undefined,
     yOffsetForKey: {},
-    highestTemp: 1,
+    highestBatchRequests: 1,
     spanTooltipState: undefined,
     showTooltip: true,
   };
 
+  // processResponse does 3 things:
+  // 1) finds the highest `batchRequests` value contained within all samples
+  // 2) computes the y-offsest for each key in the keyspace
+  // 3) writes these values and the response to state, for consumption by the visualizer.
   processResponse(response: GetSamplesResponse) {
-    console.log(response);
-    // find set of all keys
-    // if this is slow, I could get this from the server.
-    // const keys = {};
-    let highestTemp = 0;
+    let highestBatchRequests = 0;
     for (let sample of response.samples) {
       for (let stat of sample.spanStats) {
-        // we only care about deduping span keys.
-        // '1' is just a truthy value.
-        // keys[stat.span.startKey] = 1;
-        // keys[stat.span.endKey] = 1;
-
-        if (!stat.qps) {
-          stat.qps = 0;
-        }
-
-        if (stat.qps > highestTemp) {
-          highestTemp = stat.qps;
+        if (stat.batchRequests > highestBatchRequests) {
+          highestBatchRequests = stat.batchRequests;
         }
       }
     }
-
-
-    // TODO: sort lexicographically
-    // let keysSorted = Object.keys(keys);
-    // console.log(keysSorted);
 
     // compute height of each key
     const yOffsetForKey = response.keys.reduce((acc, curr, index) => {
@@ -431,41 +395,21 @@ class App extends React.Component {
       return acc;
     }, {});
 
+    console.log(response);
     console.log(yOffsetForKey);
-    console.log(highestTemp);
+    console.log(highestBatchRequests);
 
     this.setState({
       response,
       yOffsetForKey,
-      highestTemp,
+      highestBatchRequests,
     });
   }
 
-  fakeSamples(): Promise<GetSamplesResponse> {
-    const response: GetSamplesResponse = {
-      samples: [],
-      keys: []
-    };
-
-    const oneHour = 4;
-    const oneDay = oneHour * 24;
-    for (let i = 0; i < oneDay; i++) {
-      response.samples.push({
-        sampleTime: { wallTime: 1 + i },
-        spanStats: randomSpanStats(),
-      });
-    }
-
-    return Promise.resolve(response);
-  }
-
-  fetchSamples(): Promise<GetSamplesResponse> {
-    return fetch("http://localhost:8000").then((res) => res.json());
-  }
-
   componentDidMount() {
-    // this.fakeSamples().then((response) => this.processResponse(response));
-    this.fetchSamples().then((response) => this.processResponse(response));
+    fetch("http://localhost:8000")
+      .then((res) => res.json())
+      .then((response) => this.processResponse(response));
   }
 
   updateSpanHoverTooltip = (
@@ -485,7 +429,7 @@ class App extends React.Component {
         <KeyVisualizer
           response={this.state.response}
           yOffsetForKey={this.state.yOffsetForKey}
-          highestTemp={this.state.highestTemp}
+          highestTemp={this.state.highestBatchRequests}
           hoverHandler={this.updateSpanHoverTooltip}
           setShowTooltip={(show) => {
             this.setState({ showTooltip: show });
