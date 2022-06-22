@@ -25,17 +25,18 @@ function buildSortedKeys() {
   for (const sample of response.samples) {
     for (const stat of sample.spanStats) {
       // build dictionary of base64 encoded -> pretty
-      prettyForBase64[stat.sp.key] = stat.span.startKey;
-      prettyForBase64[stat.sp.endKey] = stat.span.endKey;
+      prettyForBase64[stat.span.key] = stat.pretty.startKey;
+      prettyForBase64[stat.span.endKey] = stat.pretty.endKey;
 
-      if (stat.qps == null) {
+
+      if (stat.batchRequests == null) {
         stat.batchRequests = 0
       } else {
-        stat.batchRequests = parseInt(stat.qps)
+        stat.batchRequests = parseInt(stat.batchRequests)
       }
 
-      keyspace.add(stat.sp.key);
-      keyspace.add(stat.sp.endKey);
+      keyspace.add(stat.span.key || "");
+      keyspace.add(stat.span.endKey);
     }
   } 
 

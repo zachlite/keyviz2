@@ -9,13 +9,13 @@ interface Sample {
 
 interface SpanStatistics {
   // pretty
-  span: { startKey: string; endKey: string };
+  pretty: { startKey: string; endKey: string };
   batchRequests: number;
 }
 
 interface GetSamplesResponse {
   samples: Sample[];
-  keys: string[] // lexicographically sorted
+  keys: string[]; // lexicographically sorted
 }
 
 interface KeyVisualizerProps {
@@ -37,8 +37,8 @@ const CanvasWidth = 1200;
 const CanvasHeight = 1000;
 const YAxisLabelPadding = 10;
 const XAxisLabelPadding = 10;
-const RenderableWidth = CanvasWidth - YAxisLabelPadding;
-const RenderableHeight = CanvasHeight - XAxisLabelPadding;
+// const RenderableWidth = CanvasWidth - YAxisLabelPadding;
+// const RenderableHeight = CanvasHeight - XAxisLabelPadding;
 
 function drawBucket(pixels, x, y, width, height, color) {
   // clip if not on screen
@@ -55,21 +55,72 @@ function drawBucket(pixels, x, y, width, height, color) {
 
       const index = i * 4 + j * 4 * CanvasWidth;
 
-      if (j === y || i === x) {
+      if (j === y + 1 || i === x) {
         pixels[index] = 100; // red
         pixels[index + 1] = 100; // green
         pixels[index + 2] = 100; // blue
         pixels[index + 3] = 255; // alpha
       } else {
-
         pixels[index] = color[0] * 255; // red
         pixels[index + 1] = color[1] * 255; // green
         pixels[index + 2] = color[2] * 255; // blue
         pixels[index + 3] = 255; // alpha
       }
-
     }
   }
+}
+
+const MaxLabelsYAxis = 1000;
+const MaxLabelsXAxis = 10000;
+const MaxZoom = 20;
+
+function filterAxisLabels(
+  zoom: number,
+  panOffset: number,
+  offets: Record<string, number>,
+  maxLabels: number,
+  canvasLength: number
+): Record<string, number> {
+  // find y bounds of current view
+  // find all labels that want to exist between these bounds
+  // if that number <= max, do nothing
+  // if > Max, reduce by factor of n / Max
+
+  const zoomFactor = 1 / zoom; // percentage of the canvas you can see
+  const windowSize = zoomFactor * canvasLength * MaxZoom;
+  const min = zoomFactor * MaxZoom * -panOffset;
+  const max = min + windowSize;
+
+  const labelsInWindow = [] as string[];
+  for (const [key, offset] of Object.entries(offets)) {
+    const offsetTransformed = offset * MaxZoom;
+    if (offsetTransformed >= min && offsetTransformed <= max) {
+      labelsInWindow.push(key);
+    }
+  }
+
+  let labelsReduced = [] as string[];
+  if (labelsInWindow.length > maxLabels) {
+    // reduce by factor ceil(len / MaxLabels)
+    const labelsToSkip = Math.ceil(labelsInWindow.length / maxLabels);
+
+    // preserve the first and last label.
+    const first = labelsInWindow[0];
+    const last = labelsInWindow[labelsInWindow.length - 1];
+
+    labelsReduced.push(first);
+    for (let i = 1; i < labelsInWindow.length - 2; i += labelsToSkip) {
+      labelsReduced.push(labelsInWindow[i]);
+    }
+    labelsReduced.push(last);
+  } else {
+    labelsReduced = labelsInWindow;
+  }
+
+  return labelsReduced.reduce((acc, key) => {
+    acc[key] = offets[key];
+    return acc;
+  }, {});
 }
 
 class KeyVisualizer extends React.PureComponent<KeyVisualizerProps> {
@@ -94,7 +145,6 @@ class KeyVisualizer extends React.PureComponent<KeyVisualizerProps> {
 
   renderKeyVisualizer = () => {
     requestAnimationFrame(() => {
-      const startTime = window.performance.now();
       // clear
       this.ctx.clearRect(0, 0, this.ctx.canvas.width, this.ctx.canvas.height);
       this.ctx.fillStyle = "black";
@@ -138,40 +188,65 @@ class KeyVisualizer extends React.PureComponent<KeyVisualizerProps> {
 
       // blit
       this.ctx.putImageData(imageData, 0, 0);
-      // console.log("render time: ", window.performance.now() - startTime);
 
       // render y axis
-      // choose 10 values to display
-
       this.ctx.fillStyle = "white";
       this.ctx.font = "12px sans-serif";
-      let labelCount = 0;
-      // const nSkip = 1;
-      for (let [key, yOffset] of Object.entries(this.props.yOffsetForKey)) {
-        labelCount++;
-        // if (labelCount % nSkip === 0) {
+
+      const yAxisLabels: Record<string, number> = filterAxisLabels(
+        this.xZoomFactor,
+        this.yPanOffset,
+        this.props.yOffsetForKey,
+        MaxLabelsYAxis,
+        CanvasHeight
+      );
+
+      for (let [key, yOffset] of Object.entries(yAxisLabels)) {
         this.ctx.fillText(
           key,
           YAxisLabelPadding,
           yOffset * this.yZoomFactor + this.yPanOffset
         );
-        // }
       }
 
       // render x axis
-      for (let i = 0; i < this.props.response.samples.length; i++) {
-        const sample = this.props.response.samples[i];
+      // compute x-offset for sample.
+      // TODO: move this up so it's not computed every frame
+      const xOffsetForSampleTime = this.props.response.samples.reduce(
+        (acc, sample, index) => {
+          const wallTimeMs = sample.sampleTime.wallTime / 1e6;
+          const timeString = new Date(wallTimeMs).toISOString();
+          const offset =
+            (index * CanvasWidth) / this.props.response.samples.length;
+          acc[timeString] = offset;
+          return acc;
+        },
+        {}
+      );
 
-        let timeString = new Date(
-          sample.sampleTime.wallTime / 1e6
-        ).toUTCString();
-        const x =
-          YAxisLabelPadding +
-          this.xPanOffset +
-          (i * CanvasWidth * this.xZoomFactor) / nSamples;
+      const xAxisLabels = filterAxisLabels(
+        this.xZoomFactor,
+        this.xPanOffset,
+        xOffsetForSampleTime,
+        MaxLabelsXAxis,
+        CanvasWidth
+      );
 
-        const y = CanvasHeight - XAxisLabelPadding;
-        this.ctx.fillText(timeString, x, y);
+      for (let [timestring, xOffset] of Object.entries(xAxisLabels)) {
+        // split timestring and render each part
+        const [s1, s2] = timestring.split("T");
+
+        this.ctx.fillText(
+          s1,
+          YAxisLabelPadding + this.xPanOffset + xOffset * this.xZoomFactor,
+          CanvasHeight - XAxisLabelPadding
+        );
+
+        this.ctx.fillText(
+          s2,
+          YAxisLabelPadding + this.xPanOffset + xOffset * this.xZoomFactor,
+          CanvasHeight - 2.5 * XAxisLabelPadding
+        );
       }
     }); // end RAF
   };
@@ -182,13 +257,13 @@ class KeyVisualizer extends React.PureComponent<KeyVisualizerProps> {
       this.xPanOffset +
       (sampleIndex * CanvasWidth * this.xZoomFactor) / nSamples;
     const y =
-      this.props.yOffsetForKey[bucket.span.startKey] * this.yZoomFactor +
+      this.props.yOffsetForKey[bucket.pretty.startKey] * this.yZoomFactor +
       this.yPanOffset;
 
     const width =
       ((CanvasWidth - YAxisLabelPadding) * this.xZoomFactor) / nSamples;
     const height =
-      this.props.yOffsetForKey[bucket.span.endKey] * this.yZoomFactor -
+      this.props.yOffsetForKey[bucket.pretty.endKey] * this.yZoomFactor -
       y +
       this.yPanOffset;
 
@@ -201,11 +276,12 @@ class KeyVisualizer extends React.PureComponent<KeyVisualizerProps> {
   }
 
   componentDidMount() {
-    this.ctx = this.canvasRef.current.getContext("2d");
+    // TODO: error handle
+    this.ctx = this.canvasRef.current!.getContext("2d")!;
   }
 
   componentDidUpdate() {
-    console.warn("component update");
+    // console.warn("component update");
     this.renderKeyVisualizer();
   }
 
@@ -358,8 +434,8 @@ const SpanHoverTooltip: React.FunctionComponent<SpanHoverTooltipProps> = (
         borderRadius: "4px",
       }}
     >
-      <p>start key: {props.spanStats?.span.startKey}</p>
-      <p>end key: {props.spanStats?.span.endKey}</p>
+      <p>start key: {props.spanStats?.pretty.startKey}</p>
+      <p>end key: {props.spanStats?.pretty.endKey}</p>
       <p>batch reqs: {props.spanStats?.batchRequests}</p>
     </div>
   );
@@ -391,7 +467,8 @@ class App extends React.Component {
     // compute height of each key
     const yOffsetForKey = response.keys.reduce((acc, curr, index) => {
       acc[curr] =
-        (index * (CanvasHeight - XAxisLabelPadding)) / (response.keys.length - 1);
+        (index * (CanvasHeight - XAxisLabelPadding)) /
+        (response.keys.length - 1);
       return acc;
     }, {});
 
