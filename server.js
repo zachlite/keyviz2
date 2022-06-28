@@ -29,6 +29,12 @@ function buildSortedKeys() {
       prettyForBase64[stat.span.endKey] = stat.pretty.endKey;
 
 
+      if (stat.nBytes == null) {
+        stat.nBytes = 0
+      } else {
+        stat.nBytes = parseInt(stat.nBytes);
+      }
+
       if (stat.batchRequests == null) {
         stat.batchRequests = 0
       } else {
