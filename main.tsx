@@ -70,9 +70,13 @@ function drawBucket(pixels, x, y, width, height, color) {
   }
 }
 
-const MaxLabelsYAxis = 1000;
-const MaxLabelsXAxis = 10000;
+const MaxLabelsYAxis = 64;
+const MaxLabelsXAxis = 16;
 const MaxZoom = 20;
+
+function lerp(a, b, t) {
+  return (1 - t) * a + t * b;
+}
 
 function filterAxisLabels(
   zoom: number,
@@ -294,9 +298,18 @@ class KeyVisualizer extends React.PureComponent<KeyVisualizerProps> {
         this.yZoomFactor += deltaY;
         this.xZoomFactor += deltaY;
 
-        // clamp zoom factor between 1 and 10
-        this.yZoomFactor = Math.max(1, Math.min(20, this.yZoomFactor));
-        this.xZoomFactor = Math.max(1, Math.min(20, this.xZoomFactor));
+        // clamp zoom factor between 1 and MaxZoom
+        this.yZoomFactor = Math.max(1, Math.min(MaxZoom, this.yZoomFactor));
+        this.xZoomFactor = Math.max(1, Math.min(MaxZoom, this.xZoomFactor));
+
+        // find mouse coordinates in terms of current window
+        const windowPercentageX = (e.nativeEvent.offsetX / CanvasWidth)
+        const windowPercentageY = (e.nativeEvent.offsetY / CanvasHeight)
+
+        const z = this.xZoomFactor === 1 ? 0 : (this.xZoomFactor - 1) / (MaxZoom - 1)
+        this.xPanOffset = windowPercentageX * CanvasWidth * MaxZoom * z * -1
+        this.yPanOffset = windowPercentageY * CanvasHeight * MaxZoom * z * -1
+        
 
         // if zoomed out, reset pan
         if (this.yZoomFactor === 1 && this.xZoomFactor === 1) {
@@ -512,9 +525,9 @@ class App extends React.Component {
             this.setState({ showTooltip: show });
           }}
         />
-        {this.state.showTooltip && (
+        {/* {this.state.showTooltip && (
           <SpanHoverTooltip {...this.state.spanTooltipState} />
-        )}
+        )} */}
       </div>
     );
   }
