@@ -1,19 +1,9 @@
 import React from "react";
 import ReactDOM from "react-dom";
 import { throttle } from "lodash";
+import { Sample, SpanStatistics } from "./interfaces";
 
-interface Sample {
-  sampleTime: { wallTime: number };
-  spanStats: SpanStatistics[];
-}
 
-interface SpanStatistics {
-  // pretty
-  pretty: { startKey: string; endKey: string };
-  batchRequests: number;
-  nBytes: number;
-  batchRequestsNormalized: number;
-}
 
 interface GetSamplesResponse {
   samples: Sample[];
@@ -72,8 +62,8 @@ function drawBucket(pixels, x, y, width, height, color) {
   }
 }
 
-const MaxLabelsYAxis = 64;
-const MaxLabelsXAxis = 16;
+const MaxLabelsYAxis = 32;
+const MaxLabelsXAxis = 8;
 const MaxZoom = 20;
 
 function lerp(a, b, t) {
@@ -179,7 +169,7 @@ class KeyVisualizer extends React.PureComponent<KeyVisualizerProps> {
           );
 
           // compute color
-          const color = [bucket.batchRequestsNormalized / this.props.highestTemp, 0, 0];
+          const color = [bucket.batchRequests / this.props.highestTemp, 0, 0];
 
           drawBucket(
             pixels,
@@ -452,8 +442,8 @@ const SpanHoverTooltip: React.FunctionComponent<SpanHoverTooltipProps> = (
       <p>start key: {props.spanStats?.pretty.startKey}</p>
       <p>end key: {props.spanStats?.pretty.endKey}</p>
       <p>batch reqs: {props.spanStats?.batchRequests}</p>
-      <p>batch reqs normalized: {props.spanStats?.batchRequestsNormalized}</p>
-      <p>bytes: {props.spanStats?.nBytes}</p>
+      {/* <p>batch reqs normalized: {props.spanStats?.batchRequestsNormalized}</p>
+      <p>bytes: {props.spanStats?.nBytes}</p> */}
     </div>
   );
 };
@@ -473,33 +463,34 @@ class App extends React.Component {
   // 3) writes these values and the response to state, for consumption by the visualizer.
   processResponse(response: GetSamplesResponse) {
     let highestBatchRequests = 0;
-    let highestBytes = 0;
-    for (let sample of response.samples) {
-      for (let stat of sample.spanStats) {
-
-
-        if (stat.nBytes > highestBytes) {
-          highestBytes = stat.nBytes;
-        }
-
-
-      }
-    }
+    // let highestBytes = 0;
+    // for (let sample of response.samples) {
+    //   for (let stat of sample.spanStats) {
+    //     if (stat.nBytes > highestBytes) {
+    //       highestBytes = stat.nBytes;
+    //     }
+    //   }
+    // }
 
 
     // normalize batchRequests by normalized bytes
     for (let sample of response.samples) {
       for (let stat of sample.spanStats) {
-        const normalizedBytes = stat.nBytes / highestBytes;
-        if (normalizedBytes !== 0) {
-          stat.batchRequestsNormalized = stat.batchRequests * normalizedBytes;
-        } else {
-          stat.batchRequestsNormalized = 0; // just for now?
+
+        if (stat.batchRequests > highestBatchRequests) {
+          highestBatchRequests = stat.batchRequests;
         }
 
-        if (stat.batchRequestsNormalized > highestBatchRequests) {
-          highestBatchRequests = stat.batchRequestsNormalized;
-        }
+        // const normalizedBytes = stat.nBytes / highestBytes;
+        // if (normalizedBytes !== 0) {
+        //   stat.batchRequestsNormalized = stat.batchRequests * normalizedBytes;
+        // } else {
+        //   stat.batchRequestsNormalized = 0; // just for now?
+        // }
+
+        // if (stat.batchRequestsNormalized > highestBatchRequests) {
+        //   highestBatchRequests = stat.batchRequestsNormalized;
+        // }
       }
     }
 
@@ -514,7 +505,7 @@ class App extends React.Component {
 
     console.log(response);
     console.log(yOffsetForKey);
-    console.log("highest bytes: ", highestBytes);
+    // console.log("highest bytes: ", highestBytes);
     console.log("highest batch requests: ", highestBatchRequests);
 
     this.setState({
