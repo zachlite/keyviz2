@@ -1,12 +1,13 @@
-import { aggregate } from "./downsample";
-import { Sample } from "./interfaces";
+import { aggregate, downsample, Mean, Median } from "./downsample";
+import { Sample, SpanStatistics } from "./interfaces";
 
 const { performance } = require("perf_hooks");
 const express = require("express");
 const cors = require("cors");
 const fs = require("fs");
 
-const fileNames = fs.readdirSync("./test_data/");
+const DataDir = "./test_data"
+const fileNames = fs.readdirSync(DataDir);
 const api = express();
 api.use(cors());
 
@@ -40,9 +41,9 @@ function loadFromDisk(): Sample[] {
   const samples = [];
 
   for (let fileName of fileNames.filter((name) => name.includes(".json"))) {
-    console.log(`./test_data/${fileName}`);
+    console.log(`${DataDir}/${fileName}`);
     samples.push(
-      JSON.parse(fs.readFileSync(`./test_data/${fileName}`)).samples[0]
+      JSON.parse(fs.readFileSync(`${DataDir}/${fileName}`)).samples[0]
     );
   }
 
@@ -95,6 +96,9 @@ function sumSampleBytes(samples: Sample[]): number {
   return bytes;
 }
 
+const MaxBuckets = 64;
+const StabilityBias = 0.0;
+
 function boot() {
   const samples = loadFromDisk();
   sortSamples(samples);
@@ -104,23 +108,29 @@ function boot() {
   const bytesBefore = sumSampleBytes(samples);
   console.log(bytesBefore / 1e6 + "MB");
 
-  
+  let previousBoundaries = [] as SpanStatistics[];
+
+  let bytesAfter = 0;
   for (const sample of samples) {
     const aggStartTime = performance.now();
-    aggregate(sample.spanStats, 1000);
-    console.log("aggregation done", performance.now() - aggStartTime);
+    
+    const {stats, boundariesReused} = downsample(StabilityBias, MaxBuckets, previousBoundaries, sample.spanStats);
+
+    sample.spanStats = stats;
+    previousBoundaries = [...sample.spanStats];
+
+    if (!boundariesReused) {
+      // add up all the bytes of this sample
+      bytesAfter += sumSampleBytes([sample]);
+    }
+
+    console.log("downsampling done", performance.now() - aggStartTime);
   }
 
-
-  const bytesAfter = sumSampleBytes(samples);
   const pChange = (bytesAfter - bytesBefore) / bytesBefore;
   console.log(bytesAfter / 1e6 + "MB");
   console.log(pChange);
 
-  // how much data was saved?
-  // sum all bytes from previous
-  // sum all bytes from aggregated
-  // display percent difference
 
   const keys = buildKeyspace(samples);
   return {
