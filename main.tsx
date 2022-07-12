@@ -169,7 +169,12 @@ class KeyVisualizer extends React.PureComponent<KeyVisualizerProps> {
           );
 
           // compute color
-          const color = [bucket.batchRequests / this.props.highestTemp, 0, 0];
+          const color = [
+            Math.log(Math.max(bucket.batchRequests, 1)) /
+              Math.log(this.props.highestTemp),
+            0,
+            0,
+          ];
 
           drawBucket(
             pixels,
@@ -544,9 +549,9 @@ class App extends React.Component {
             this.setState({ showTooltip: show });
           }}
         />
-        {this.state.showTooltip && (
+        {/* {this.state.showTooltip && (
           <SpanHoverTooltip {...this.state.spanTooltipState} />
-        )}
+        )} */}
       </div>
     );
   }

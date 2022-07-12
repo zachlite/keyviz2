@@ -6,7 +6,7 @@ const express = require("express");
 const cors = require("cors");
 const fs = require("fs");
 
-const DataDir = "./test_data"
+const DataDir = "./test_data_dynamic_hotkey_24m"
 const fileNames = fs.readdirSync(DataDir);
 const api = express();
 api.use(cors());
@@ -96,8 +96,8 @@ function sumSampleBytes(samples: Sample[]): number {
   return bytes;
 }
 
-const MaxBuckets = 64;
-const StabilityBias = 0.0;
+const MaxBuckets = 1000;
+const StabilityBias = 0;
 
 function boot() {
   const samples = loadFromDisk();
@@ -112,6 +112,7 @@ function boot() {
 
   let bytesAfter = 0;
   for (const sample of samples) {
+    const nBuckets = sample.spanStats.length;
     const aggStartTime = performance.now();
     
     const {stats, boundariesReused} = downsample(StabilityBias, MaxBuckets, previousBoundaries, sample.spanStats);
@@ -120,14 +121,19 @@ function boot() {
     previousBoundaries = [...sample.spanStats];
 
     if (!boundariesReused) {
-      // add up all the bytes of this sample
       bytesAfter += sumSampleBytes([sample]);
     }
 
-    console.log("downsampling done", performance.now() - aggStartTime);
+    console.log(`downsampled ${nBuckets} buckets in ${performance.now() - aggStartTime} ms.`);
   }
 
+  const bytesAfterTotal = sumSampleBytes(samples);
+  const bytesSavedByStableBoundaries = bytesAfterTotal - bytesAfter;
+  const stableBoundariesPercentContribution = bytesSavedByStableBoundaries / (bytesBefore - bytesAfter)
   const pChange = (bytesAfter - bytesBefore) / bytesBefore;
+
+  console.log("percentage of bytes saved because of stable boundaries: ", stableBoundariesPercentContribution);
+  console.log("bytes saved by stable boundaries: ", bytesSavedByStableBoundaries);
   console.log(bytesAfter / 1e6 + "MB");
   console.log(pChange);
 
